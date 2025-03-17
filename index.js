@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const readline = require("readline");
 
+// Class to represent a Dice
 class Dice {
   constructor(faces) {
     this.faces = faces;
@@ -11,6 +12,7 @@ class Dice {
   }
 }
 
+// Class to parse dice configurations from command line arguments
 class DiceParser {
   static parse(diceStrings) {
     return diceStrings.map((diceStr) => {
@@ -21,9 +23,11 @@ class DiceParser {
   }
 }
 
+// Class to generate cryptographically secure random numbers and HMAC
 class FairRandomGenerator {
   static generateKey() {
-    return crypto.randomBytes(32).toString("hex"); 
+    return crypto.randomBytes(32).toString("hex"); // 256-bit key
+  }
 
   static generateHMAC(key, message) {
     return crypto
@@ -39,6 +43,7 @@ class FairRandomGenerator {
   }
 }
 
+// Class to calculate and display probabilities of winning for dice pairs
 class ProbabilityCalculator {
   static calculateProbabilities(diceList) {
     const probabilities = [];
@@ -79,6 +84,7 @@ class ProbabilityCalculator {
   }
 }
 
+// Class to manage the game flow
 class Game {
   constructor(diceList) {
     this.diceList = diceList;
@@ -168,7 +174,7 @@ class Game {
       return this.exit();
     }
 
-    const dice = this.diceList[diceIndex]; 
+    const dice = this.diceList[diceIndex]; // Retrieve the dice object from the diceList
     if (!dice) {
       console.error("Error: Dice not found.");
       return this.exit();
@@ -252,6 +258,7 @@ class Game {
   }
 }
 
+// Main function to start the game
 function main() {
   const diceStrings = process.argv.slice(2);
   if (diceStrings.length < 3) {
