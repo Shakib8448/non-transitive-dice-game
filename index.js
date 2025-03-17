@@ -1,98 +1,156 @@
-const readline = require("readline");
 const crypto = require("crypto");
-const Dice = require("./Dice");
-const FairRandom = require("./FairRandom");
-const ProbabilityCalculator = require("./ProbabilityCalculator");
-const HelpTable = require("./HelpTable");
+const readline = require("readline");
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
+class Dice {
+  constructor(faces) {
+    this.faces = faces;
+  }
 
-const diceFaces = process.argv
-  .slice(2)
-  .map((arg) => arg.split(",").map(Number));
-
-if (diceFaces.length < 3 || diceFaces.some((faces) => faces.length !== 6)) {
-  console.error(
-    "Invalid input. Please provide at least 3 dice, each with 6 faces."
-  );
-  console.error("Example: node index.js 2,2,4,4,9,9 6,8,1,1,8,6 7,5,3,7,5,3");
-  process.exit(1);
-}
-
-for (const faces of diceFaces) {
-  if (faces.some((face) => isNaN(face))) {
-    console.error("Invalid input. All dice faces must be integers.");
-    console.error("Example: node index.js 2,2,4,4,9,9 6,8,1,1,8,6 7,5,3,7,5,3");
-    process.exit(1);
+  roll(index) {
+    return this.faces[index];
   }
 }
 
-const dice = diceFaces.map((faces) => new Dice(faces));
-const probabilities = ProbabilityCalculator.calculateProbabilities(dice);
+class DiceParser {
+  static parse(diceStrings) {
+    return diceStrings.map((diceStr) => {
+      const faces = diceStr.split(",").map(Number);
+      if (faces.some(isNaN)) throw new Error("Dice faces must be integers.");
+      return new Dice(faces);
+    });
+  }
+}
+
+class FairRandomGenerator {
+  static generateKey() {
+    return crypto.randomBytes(32).toString("hex"); 
+
+  static generateHMAC(key, message) {
+    return crypto
+      .createHmac("sha3-256", key)
+      .update(message.toString())
+      .digest("hex");
+  }
+
+  static generateFairRandom(key, userChoice, range) {
+    const computerChoice = crypto.randomInt(range);
+    const result = (computerChoice + userChoice) % range;
+    return { computerChoice, result };
+  }
+}
+
+class ProbabilityCalculator {
+  static calculateProbabilities(diceList) {
+    const probabilities = [];
+    for (let i = 0; i < diceList.length; i++) {
+      const row = [];
+      for (let j = 0; j < diceList.length; j++) {
+        if (i === j) {
+          row.push("-");
+          continue;
+        }
+        const wins = ProbabilityCalculator.calculateWins(
+          diceList[i],
+          diceList[j]
+        );
+        row.push(`${wins}%`);
+      }
+      probabilities.push(row);
+    }
+    return probabilities;
+  }
+
+  static calculateWins(diceA, diceB) {
+    let wins = 0;
+    for (const faceA of diceA.faces) {
+      for (const faceB of diceB.faces) {
+        if (faceA > faceB) wins++;
+      }
+    }
+    const total = diceA.faces.length * diceB.faces.length;
+    return ((wins / total) * 100).toFixed(2);
+  }
+
+  static displayProbabilities(diceList) {
+    const probabilities =
+      ProbabilityCalculator.calculateProbabilities(diceList);
+    console.log("\nProbabilities of Winning:");
+    console.table(probabilities);
+  }
+}
 
 class Game {
-  constructor(dice, rl) {
-    this.dice = dice;
-    this.rl = rl;
+  constructor(diceList) {
+    this.diceList = diceList;
+    this.rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
   }
 
   async start() {
-    console.log("Welcome to the Non-Transitive Dice Game!");
-    const { firstMove } = await this.determineFirstMove();
-    console.log(
-      firstMove === 0
-        ? "You make the first move!"
-        : "Computer makes the first move!"
-    );
-    await this.playGame(firstMove);
-  }
+    console.log("Let's determine who makes the first move.");
+    const { key, hmac } = this.generateFairRandom(2);
+    console.log(`I selected a random value in the range 0..1 (HMAC=${hmac}).`);
+    console.log("Try to guess my selection.");
+    console.log("0 - 0");
+    console.log("1 - 1");
+    console.log("X - exit");
+    console.log("? - help");
 
-  async determineFirstMove() {
-    const { combinedNumber, computerNumber, key, hmac } =
-      FairRandom.fairRandomInt(0, 2);
-    console.log(`HMAC: ${hmac}`);
-    console.log("Guess 0 or 1 to determine who makes the first move.");
-
-    const userGuess = await this.prompt("Your guess (0 or 1): ");
-    const result = (parseInt(userGuess) + computerNumber) % 2;
-
-    console.log(`Computer's number: ${computerNumber}`);
-    console.log(`Result: ${result}`);
-    console.log(`Key: ${key.toString("hex")}`);
-
-    return { firstMove: result };
-  }
-
-  async playGame(firstMove) {
-    let userDice, computerDice;
-
-    if (firstMove === 0) {
-      userDice = await this.userSelectDice();
-      computerDice = this.computerSelectDice(userDice);
-    } else {
-      computerDice = this.computerSelectDice();
-      userDice = await this.userSelectDice(computerDice);
+    const userChoice = await this.prompt("Your selection: ");
+    if (userChoice === "X") return this.exit();
+    if (userChoice === "?") {
+      ProbabilityCalculator.displayProbabilities(this.diceList);
+      return this.start();
     }
 
-    console.log(`You choose Dice: [${userDice.faces.join(",")}]`);
-    console.log(`Computer chooses Dice: [${computerDice.faces.join(",")}]`);
-
-    const userRoll = await this.fairRoll(userDice.faces.length, "your");
-    console.log(`Your throw: ${userRoll}`);
-
-    const computerRoll = await this.fairRoll(
-      computerDice.faces.length,
-      "computer's"
+    const { computerChoice, result } = FairRandomGenerator.generateFairRandom(
+      key,
+      parseInt(userChoice),
+      2
     );
-    console.log(`Computer's throw: ${computerRoll}`);
+    console.log(`My selection: ${computerChoice} (KEY=${key}).`);
+    const firstPlayer = result === 0 ? "computer" : "user";
+    console.log(
+      `${firstPlayer === "computer" ? "I" : "You"} make the first move.`
+    );
 
+    await this.playRound(firstPlayer);
+  }
+
+  async playRound(firstPlayer) {
+    let computerDiceIndex, userDiceIndex;
+
+    if (firstPlayer === "computer") {
+      computerDiceIndex = this.chooseComputerDice();
+      console.log(
+        `I choose the [${this.diceList[computerDiceIndex].faces}] dice.`
+      );
+      userDiceIndex = await this.chooseUserDice(computerDiceIndex);
+      console.log(
+        `You choose the [${this.diceList[userDiceIndex].faces}] dice.`
+      );
+    } else {
+      userDiceIndex = await this.chooseUserDice();
+      console.log(
+        `You choose the [${this.diceList[userDiceIndex].faces}] dice.`
+      );
+      computerDiceIndex = this.chooseComputerDice(userDiceIndex);
+      console.log(
+        `I choose the [${this.diceList[computerDiceIndex].faces}] dice.`
+      );
+    }
+
+    const computerRoll = await this.rollDice(computerDiceIndex, "computer");
+    const userRoll = await this.rollDice(userDiceIndex, "user");
+
+    console.log(`My roll: ${computerRoll}`);
+    console.log(`Your roll: ${userRoll}`);
     if (userRoll > computerRoll) {
       console.log("You win!");
     } else if (userRoll < computerRoll) {
-      console.log("Computer wins!");
+      console.log("I win!");
     } else {
       console.log("It's a tie!");
     }
@@ -100,69 +158,116 @@ class Game {
     this.rl.close();
   }
 
-  async userSelectDice(excludeDice = null) {
+  async rollDice(diceIndex, player) {
+    if (
+      diceIndex === undefined ||
+      diceIndex < 0 ||
+      diceIndex >= this.diceList.length
+    ) {
+      console.error("Error: Invalid dice selection.");
+      return this.exit();
+    }
+
+    const dice = this.diceList[diceIndex]; 
+    if (!dice) {
+      console.error("Error: Dice not found.");
+      return this.exit();
+    }
+
+    const { key, hmac } = this.generateFairRandom(dice.faces.length);
+    console.log(
+      `${
+        player === "computer" ? "I" : "You"
+      } selected a random value in the range 0..${
+        dice.faces.length - 1
+      } (HMAC=${hmac}).`
+    );
+    console.log("Add your number modulo " + dice.faces.length + ".");
+    for (let i = 0; i < dice.faces.length; i++) {
+      console.log(`${i} - ${i}`);
+    }
+    console.log("X - exit");
+    console.log("? - help");
+
+    const userChoice = await this.prompt("Your selection: ");
+    if (userChoice === "X") return this.exit();
+    if (userChoice === "?") {
+      ProbabilityCalculator.displayProbabilities(this.diceList);
+      return this.rollDice(diceIndex, player);
+    }
+
+    const { computerChoice, result } = FairRandomGenerator.generateFairRandom(
+      key,
+      parseInt(userChoice),
+      dice.faces.length
+    );
+    console.log(`My number is ${computerChoice} (KEY=${key}).`);
+    console.log(
+      `The result is ${computerChoice} + ${userChoice} = ${result} (mod ${dice.faces.length}).`
+    );
+    return dice.roll(result);
+  }
+
+  generateFairRandom(range) {
+    const key = FairRandomGenerator.generateKey();
+    const computerChoice = crypto.randomInt(range);
+    const hmac = FairRandomGenerator.generateHMAC(key, computerChoice);
+    return { key, hmac, computerChoice };
+  }
+
+  chooseComputerDice(excludeIndex = null) {
+    const availableIndices = this.diceList
+      .map((_, index) => index)
+      .filter((index) => index !== excludeIndex);
+    return availableIndices[
+      Math.floor(Math.random() * availableIndices.length)
+    ];
+  }
+
+  async chooseUserDice(excludeIndex = null) {
     console.log("Choose your dice:");
-    this.dice.forEach((d, i) => {
-      console.log(`${i} - [${d.faces.join(",")}]`);
+    this.diceList.forEach((dice, index) => {
+      if (index !== excludeIndex) console.log(`${index} - [${dice.faces}]`);
     });
     console.log("X - exit");
     console.log("? - help");
 
-    const selection = await this.prompt("Your selection: ");
-    if (selection === "x") {
-      console.log("Exiting the game. Goodbye!");
-      process.exit(0);
-    } else if (selection === "?") {
-      HelpTable.display(probabilities);
-      return await this.userSelectDice(excludeDice);
-    } else if (
-      !isNaN(selection) &&
-      selection >= 0 &&
-      selection < this.dice.length
-    ) {
-      const selectedDice = this.dice[selection];
-      if (excludeDice && selectedDice === excludeDice) {
-        console.log(
-          "This dice is already selected by the computer. Please choose another dice."
-        );
-        return await this.userSelectDice(excludeDice);
-      }
-      return selectedDice;
-    } else {
-      console.log("Invalid input. Please try again.");
-      return await this.userSelectDice(excludeDice);
+    const userChoice = await this.prompt("Your selection: ");
+    if (userChoice === "X") return this.exit();
+    if (userChoice === "?") {
+      ProbabilityCalculator.displayProbabilities(this.diceList);
+      return this.chooseUserDice(excludeIndex);
     }
-  }
-
-  computerSelectDice(excludeDice = null) {
-    const availableDice = this.dice.filter(
-      (d) => !excludeDice || d !== excludeDice
-    );
-    const selectedDice =
-      availableDice[Math.floor(Math.random() * availableDice.length)];
-    return selectedDice;
-  }
-
-  async fairRoll(rangeMax, player) {
-    const { combinedNumber, computerNumber, key, hmac } =
-      FairRandom.fairRandomInt(0, rangeMax);
-    console.log(`HMAC for ${player} throw: ${hmac}`);
-    console.log(`Add your number modulo ${rangeMax}.`);
-
-    const userNumber = parseInt(await this.prompt("Your number: "));
-    const result = (userNumber + computerNumber) % rangeMax;
-
-    console.log(`Computer's number: ${computerNumber}`);
-    console.log(`Key: ${key.toString("hex")}`);
-    console.log(`Result: ${result}`);
-
-    return result;
+    return parseInt(userChoice);
   }
 
   prompt(question) {
     return new Promise((resolve) => this.rl.question(question, resolve));
   }
+
+  exit() {
+    console.log("Exiting the game.");
+    this.rl.close();
+    process.exit();
+  }
 }
 
-const game = new Game(dice, rl);
-game.start();
+function main() {
+  const diceStrings = process.argv.slice(2);
+  if (diceStrings.length < 3) {
+    console.error("Error: At least 3 dice configurations are required.");
+    console.error("Example: node game.js 2,2,4,4,9,9 6,8,1,1,8,6 7,5,3,7,5,3");
+    process.exit(1);
+  }
+
+  try {
+    const diceList = DiceParser.parse(diceStrings);
+    const game = new Game(diceList);
+    game.start();
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+main();
