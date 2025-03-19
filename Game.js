@@ -1,90 +1,8 @@
-const crypto = require("crypto");
 const readline = require("readline");
+const crypto = require("crypto");
+const FairRandomGenerator = require("./FairRandomGenerator");
+const ProbabilityCalculator = require("./ProbabilityCalculator");
 
-// Class to represent a Dice
-class Dice {
-  constructor(faces) {
-    this.faces = faces;
-  }
-
-  roll(index) {
-    return this.faces[index];
-  }
-}
-
-// Class to parse dice configurations from command line arguments
-class DiceParser {
-  static parse(diceStrings) {
-    return diceStrings.map((diceStr) => {
-      const faces = diceStr.split(",").map(Number);
-      if (faces.some(isNaN)) throw new Error("Dice faces must be integers.");
-      return new Dice(faces);
-    });
-  }
-}
-
-// Class to generate cryptographically secure random numbers and HMAC
-class FairRandomGenerator {
-  static generateKey() {
-    return crypto.randomBytes(32).toString("hex"); // 256-bit key
-  }
-
-  static generateHMAC(key, message) {
-    return crypto
-      .createHmac("sha3-256", key)
-      .update(message.toString())
-      .digest("hex");
-  }
-
-  static generateFairRandom(key, userChoice, range) {
-    const computerChoice = crypto.randomInt(range);
-    const result = (computerChoice + userChoice) % range;
-    return { computerChoice, result };
-  }
-}
-
-// Class to calculate and display probabilities of winning for dice pairs
-class ProbabilityCalculator {
-  static calculateProbabilities(diceList) {
-    const probabilities = [];
-    for (let i = 0; i < diceList.length; i++) {
-      const row = [];
-      for (let j = 0; j < diceList.length; j++) {
-        if (i === j) {
-          row.push("-");
-          continue;
-        }
-        const wins = ProbabilityCalculator.calculateWins(
-          diceList[i],
-          diceList[j]
-        );
-        row.push(`${wins}%`);
-      }
-      probabilities.push(row);
-    }
-    return probabilities;
-  }
-
-  static calculateWins(diceA, diceB) {
-    let wins = 0;
-    for (const faceA of diceA.faces) {
-      for (const faceB of diceB.faces) {
-        if (faceA > faceB) wins++;
-      }
-    }
-    const total = diceA.faces.length * diceB.faces.length;
-    return ((wins / total) * 100).toFixed(2);
-  }
-
-  static displayProbabilities(diceList) {
-    const probabilities =
-      ProbabilityCalculator.calculateProbabilities(diceList);
-    console.log("\nProbabilities of Winning:");
-    console.table(probabilities);
-  }
-}
-
-// Class to manage the game flow
 class Game {
   constructor(diceList) {
     this.diceList = diceList;
@@ -96,7 +14,7 @@ class Game {
 
   async start() {
     console.log("Let's determine who makes the first move.");
-    const { key, hmac } = this.generateFairRandom(2);
+    const { key, hmac, computerChoice } = this.generateFairRandom(2);
     console.log(`I selected a random value in the range 0..1 (HMAC=${hmac}).`);
     console.log("Try to guess my selection.");
     console.log("0 - 0");
@@ -111,18 +29,15 @@ class Game {
       return this.start();
     }
 
-    const { computerChoice, result } = FairRandomGenerator.generateFairRandom(
-      key,
-      parseInt(userChoice),
-      2
-    );
+    const userGuess = parseInt(userChoice);
     console.log(`My selection: ${computerChoice} (KEY=${key}).`);
-    const firstPlayer = result === 0 ? "computer" : "user";
-    console.log(
-      `${firstPlayer === "computer" ? "I" : "You"} make the first move.`
-    );
-
-    await this.playRound(firstPlayer);
+    if (userGuess === computerChoice) {
+      console.log("You guessed correctly! You make the first move.");
+      await this.playRound("user");
+    } else {
+      console.log("I make the first move.");
+      await this.playRound("computer");
+    }
   }
 
   async playRound(firstPlayer) {
@@ -151,12 +66,12 @@ class Game {
     const computerRoll = await this.rollDice(computerDiceIndex, "computer");
     const userRoll = await this.rollDice(userDiceIndex, "user");
 
-    console.log(`My roll: ${computerRoll}`);
-    console.log(`Your roll: ${userRoll}`);
+    console.log(`My roll result is ${computerRoll}.`);
+    console.log(`Your roll result is ${userRoll}.`);
     if (userRoll > computerRoll) {
-      console.log("You win!");
+      console.log(`You win (${userRoll} > ${computerRoll})!`);
     } else if (userRoll < computerRoll) {
-      console.log("I win!");
+      console.log(`I win (${computerRoll} > ${userRoll})!`);
     } else {
       console.log("It's a tie!");
     }
@@ -174,7 +89,7 @@ class Game {
       return this.exit();
     }
 
-    const dice = this.diceList[diceIndex]; // Retrieve the dice object from the diceList
+    const dice = this.diceList[diceIndex];
     if (!dice) {
       console.error("Error: Dice not found.");
       return this.exit();
@@ -183,8 +98,13 @@ class Game {
     const { key, hmac } = this.generateFairRandom(dice.faces.length);
     console.log(
       `${
-        player === "computer" ? "I" : "You"
-      } selected a random value in the range 0..${
+        player === "computer"
+          ? "It's time for my roll."
+          : "It's time for your roll."
+      }`
+    );
+    console.log(
+      `I selected a random value in the range 0..${
         dice.faces.length - 1
       } (HMAC=${hmac}).`
     );
@@ -209,7 +129,7 @@ class Game {
     );
     console.log(`My number is ${computerChoice} (KEY=${key}).`);
     console.log(
-      `The result is ${computerChoice} + ${userChoice} = ${result} (mod ${dice.faces.length}).`
+      `The fair number generation result is ${computerChoice} + ${userChoice} = ${result} (mod ${dice.faces.length}).`
     );
     return dice.roll(result);
   }
@@ -233,7 +153,8 @@ class Game {
   async chooseUserDice(excludeIndex = null) {
     console.log("Choose your dice:");
     this.diceList.forEach((dice, index) => {
-      if (index !== excludeIndex) console.log(`${index} - [${dice.faces}]`);
+      if (index !== excludeIndex)
+        console.log(`${index} - ${dice.faces.join(",")}`);
     });
     console.log("X - exit");
     console.log("? - help");
@@ -258,23 +179,4 @@ class Game {
   }
 }
 
-// Main function to start the game
-function main() {
-  const diceStrings = process.argv.slice(2);
-  if (diceStrings.length < 3) {
-    console.error("Error: At least 3 dice configurations are required.");
-    console.error("Example: node game.js 2,2,4,4,9,9 6,8,1,1,8,6 7,5,3,7,5,3");
-    process.exit(1);
-  }
-
-  try {
-    const diceList = DiceParser.parse(diceStrings);
-    const game = new Game(diceList);
-    game.start();
-  } catch (error) {
-    console.error(`Error: ${error.message}`);
-    process.exit(1);
-  }
-}
-
-main();
+module.exports = Game;
